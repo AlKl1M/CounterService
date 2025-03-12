@@ -1,0 +1,99 @@
+tasks.register('checkStyle') {
+    def checkstyleFile = layout.projectDirectory.file('checkstyle.xml')
+
+    onlyIf {
+        checkstyleFile.asFile.exists()
+    }
+
+    doLast {
+        def report = new XmlSlurper().parse(checkstyleFile.get().asFile)
+        def errors = report.file.error.findAll { it.@severity == 'error' }
+
+        if (errors) {
+            def errorMessage = new StringBuilder("Найдены ошибки стиля: ${errors.size()}\nДетали ошибок:\n")
+            errors.each { error ->
+                errorMessage.append(" - ${error.@line}: ${error.@message}\n")
+            }
+
+            def reportFile = layout.buildDirectory.file('checkstyle_report.txt').get().asFile
+            reportFile.text = errorMessage.toString()
+
+            throw new GradleException(errorMessage.toString())
+        } else {
+            logger.lifecycle("Ошибок стиля не найдено.")
+        }
+    }
+}
+
+tasks.register('generateChangelog') {
+    def changelogFile = layout.buildDirectory.file('changelog.md')
+    outputs.file(changelogFile)
+
+    doLast {
+        def tags = getGitTags()
+        if (tags.empty) {
+            logger.lifecycle("Нет тегов в репозитории")
+            return
+        }
+
+        def changelogContent = new StringBuilder("# Changelog\n\n")
+        String previousTag = null
+
+        tags.reverse().each { tag ->
+            def tagDate = getTagDate(tag)
+            def range = previousTag ? "${previousTag}..${tag}" : tag
+            def commits = getCommitsInRange(range)
+
+            changelogContent.append("## ${tag} (${tagDate})\n\n")
+            commits.eachLine { commit ->
+                changelogContent.append("- ${commit}\n")
+            }
+            changelogContent.append("\n")
+            previousTag = tag
+        }
+
+        if (previousTag) {
+            def unreleasedCommits = getCommitsInRange("${previousTag}..HEAD")
+            if (unreleasedCommits) {
+                changelogContent.append("## Unreleased\n\n")
+                unreleasedCommits.eachLine { commit ->
+                    changelogContent.append("- ${commit}\n")
+                }
+            }
+        }
+
+        changelogFile.get().asFile.text = changelogContent.toString()
+        logger.lifecycle("Changelog сгенерирован: ${changelogFile.get().asFile.absolutePath}")
+    }
+}
+
+def getGitTags() {
+    def stdout = new ByteArrayOutputStream()
+    project.exec {
+        executable = 'git'
+        args = ['tag', '--sort=-creatordate']
+        standardOutput = stdout
+    }
+    stdout.toString().trim().split('\n') as List
+}
+
+def getTagDate(String tag) {
+    def stdout = new ByteArrayOutputStream()
+    project.exec {
+        executable = 'git'
+        args = ['log', '-1', '--format=%ai', tag]
+        standardOutput = stdout
+    }
+    stdout.toString().trim().split(' ').first()
+}
+
+def getCommitsInRange(String range) {
+    def stdout = new ByteArrayOutputStream()
+    project.exec {
+        executable = 'git'
+        args = ['log', range, '--pretty=format:%h - %s (%an, %ad)', '--date=short']
+        standardOutput = stdout
+        ignoreExitValue = true
+    }
+    stdout.toString().trim()
+}

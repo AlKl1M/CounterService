@@ -42,4 +42,5 @@ java {
     }
 }
 
-apply from: 'tasks.gradle'
+apply from: 'test-tasks.gradle'
+apply from: 'dev-tasks.gradle'
