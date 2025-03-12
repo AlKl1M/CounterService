@@ -1,26 +1,37 @@
-tasks.register('checkStyle') {
-    def checkstyleFile = layout.projectDirectory.file('checkstyle.xml')
+tasks.register('customCheckstyle') {
+    group = 'Verification'
+    description = 'Custom Checkstyle verification'
 
-    onlyIf {
-        checkstyleFile.asFile.exists()
-    }
+    dependsOn tasks.named('checkstyleMain')
 
     doLast {
-        def report = new XmlSlurper().parse(checkstyleFile.get().asFile)
-        def errors = report.file.error.findAll { it.@severity == 'error' }
+        def reportFile = layout.buildDirectory.file('reports/checkstyle/main.xml').get().asFile
 
-        if (errors) {
-            def errorMessage = new StringBuilder("Найдены ошибки стиля: ${errors.size()}\nДетали ошибок:\n")
-            errors.each { error ->
-                errorMessage.append(" - ${error.@line}: ${error.@message}\n")
+        if (!reportFile.exists()) {
+            throw new GradleException("Checkstyle report not found: ${reportFile}")
+        }
+
+        def report = new XmlSlurper().parse(reportFile)
+        def errors = report.file.'**'.findAll { node ->
+            node.name() == 'error' && node.@severity == 'error'
+        }
+
+        if (!errors.isEmpty()) {
+            def errorMessage = new StringBuilder("Checkstyle violations found: ${errors.size()}\n")
+            report.file.each { file ->
+                file.error.each { error ->
+                    errorMessage.append("File: ${file.@name}\n")
+                    errorMessage.append("Line ${error.@line}: ${error.@message}\n")
+                }
             }
 
-            def reportFile = layout.buildDirectory.file('checkstyle_report.txt').get().asFile
-            reportFile.text = errorMessage.toString()
+            def txtReport = layout.buildDirectory.file('reports/checkstyle/custom_report.txt').get().asFile
+            txtReport.parentFile.mkdirs()
+            txtReport.text = errorMessage.toString()
 
             throw new GradleException(errorMessage.toString())
         } else {
-            logger.lifecycle("Ошибок стиля не найдено.")
+            logger.lifecycle("Checkstyle verification passed!")
         }
     }
 }
@@ -40,15 +51,18 @@ tasks.register('generateChangelog') {
         String previousTag = null
 
         tags.reverse().each { tag ->
-            def tagDate = getTagDate(tag)
+            def tagDateTime = getTagDateTime(tag)
             def range = previousTag ? "${previousTag}..${tag}" : tag
             def commits = getCommitsInRange(range)
 
-            changelogContent.append("## ${tag} (${tagDate})\n\n")
-            commits.eachLine { commit ->
-                changelogContent.append("- ${commit}\n")
+            if (commits) {
+                changelogContent.append("## ${tag} (${tagDateTime})\n\n")
+                commits.eachLine { commit ->
+                    changelogContent.append("- ${commit}\n")
+                }
+                changelogContent.append("\n")
             }
-            changelogContent.append("\n")
+
             previousTag = tag
         }
 
@@ -59,6 +73,7 @@ tasks.register('generateChangelog') {
                 unreleasedCommits.eachLine { commit ->
                     changelogContent.append("- ${commit}\n")
                 }
+                changelogContent.append("\n")
             }
         }
 
@@ -77,21 +92,21 @@ def getGitTags() {
     stdout.toString().trim().split('\n') as List
 }
 
-def getTagDate(String tag) {
+def getTagDateTime(String tag) {
     def stdout = new ByteArrayOutputStream()
     project.exec {
         executable = 'git'
         args = ['log', '-1', '--format=%ai', tag]
         standardOutput = stdout
     }
-    stdout.toString().trim().split(' ').first()
+    stdout.toString().trim().replace(" ", "T")
 }
 
 def getCommitsInRange(String range) {
     def stdout = new ByteArrayOutputStream()
     project.exec {
         executable = 'git'
-        args = ['log', range, '--pretty=format:%h - %s (%an, %ad)', '--date=short']
+        args = ['log', range, '--pretty=format:%h - %s%n  Автор: %an | Дата: %ad %at', '--date=iso']
         standardOutput = stdout
         ignoreExitValue = true
     }
