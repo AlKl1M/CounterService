@@ -112,3 +112,10 @@ def getCommitsInRange(String range) {
     }
     stdout.toString().trim()
 }
+
+tasks.register('checkDependenciesSecurity') {
+    dependsOn 'dependencyCheckAnalyze'
+    doLast {
+        logger.lifecycle("Проверка безопасности зависимостей завершена")
+    }
+}
