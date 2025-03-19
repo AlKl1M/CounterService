@@ -1,0 +1,83 @@
+tasks.register('hello') {
+    doLast {
+        logger.lifecycle('hello, world')
+    }
+}
+
+tasks.register('copyResources', Copy) {
+    from fileTree('src/main/resources') {
+        include '**/*.xml'
+        exclude '**/temp/*'
+    }
+    into layout.buildDirectory.dir('copy-resources')
+
+    doLast {
+        logger.lifecycle("Ресурсы скопированы в ${destinationDir}")
+    }
+}
+
+tasks.register('generateVersionFile') {
+    def outputFile = layout.buildDirectory.file('version.txt')
+    outputs.file(outputFile)
+
+    inputs.property('version', project.version)
+
+    doLast {
+        outputFile.get().asFile.parentFile.mkdirs()
+        outputFile.get().asFile.text = """\
+            |Версия проекта: ${project.version}
+            |Создано: ${new Date()}
+            |""".stripMargin()
+    }
+}
+
+tasks.register('deepClean', Delete) {
+    delete(
+            layout.projectDirectory.dir('logs'),
+            layout.projectDirectory.dir('tmp'),
+            layout.projectDirectory.dir('out')
+    )
+    dependsOn tasks.named('clean')
+
+    doLast {
+        logger.lifecycle("Глубокая очистка выполнена")
+    }
+}
+
+tasks.register('projectInfo') {
+    doLast {
+        logger.lifecycle("""\
+            |Имя проекта: ${project.name}
+            |Версия: ${project.version}
+            |Группа: ${project.group}
+            |Корневой проект: ${rootProject.name}
+            |""".stripMargin())
+    }
+}
+
+tasks.register('countCodeLines') {
+    def sources = layout.files('src').asFileTree.matching {
+        include '**/*.java', '**/*.kt', '**/*.groovy'
+    }
+
+    inputs.files(sources)
+
+    doLast {
+        def lines = sources.sum { file ->
+            file.readLines().size()
+        }
+        logger.lifecycle("Всего строк кода: $lines")
+    }
+}
+
+tasks.register('gitStatus') {
+    doLast {
+        def result = new ByteArrayOutputStream()
+        exec {
+            executable = 'git'
+            args = ['status']
+            standardOutput = result
+        }
+        logger.lifecycle(result.toString())
+    }
+}

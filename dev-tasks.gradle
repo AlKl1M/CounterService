@@ -1,0 +1,121 @@
+tasks.register('customCheckstyle') {
+    group = 'Verification'
+    description = 'Custom Checkstyle verification'
+
+    dependsOn tasks.named('checkstyleMain')
+
+    doLast {
+        def reportFile = layout.buildDirectory.file('reports/checkstyle/main.xml').get().asFile
+
+        if (!reportFile.exists()) {
+            throw new GradleException("Checkstyle report not found: ${reportFile}")
+        }
+
+        def report = new XmlSlurper().parse(reportFile)
+        def errors = report.file.'**'.findAll { node ->
+            node.name() == 'error' && node.@severity == 'error'
+        }
+
+        if (!errors.isEmpty()) {
+            def errorMessage = new StringBuilder("Checkstyle violations found: ${errors.size()}\n")
+            report.file.each { file ->
+                file.error.each { error ->
+                    errorMessage.append("File: ${file.@name}\n")
+                    errorMessage.append("Line ${error.@line}: ${error.@message}\n")
+                }
+            }
+
+            def txtReport = layout.buildDirectory.file('reports/checkstyle/custom_report.txt').get().asFile
+            txtReport.parentFile.mkdirs()
+            txtReport.text = errorMessage.toString()
+
+            throw new GradleException(errorMessage.toString())
+        } else {
+            logger.lifecycle("Checkstyle verification passed!")
+        }
+    }
+}
+
+tasks.register('generateChangelog') {
+    def changelogFile = layout.buildDirectory.file('changelog.md')
+    outputs.file(changelogFile)
+
+    doLast {
+        def tags = getGitTags()
+        if (tags.empty) {
+            logger.lifecycle("Нет тегов в репозитории")
+            return
+        }
+
+        def changelogContent = new StringBuilder("# Changelog\n\n")
+        String previousTag = null
+
+        tags.reverse().each { tag ->
+            def tagDateTime = getTagDateTime(tag)
+            def range = previousTag ? "${previousTag}..${tag}" : tag
+            def commits = getCommitsInRange(range)
+
+            if (commits) {
+                changelogContent.append("## ${tag} (${tagDateTime})\n\n")
+                commits.eachLine { commit ->
+                    changelogContent.append("- ${commit}\n")
+                }
+                changelogContent.append("\n")
+            }
+
+            previousTag = tag
+        }
+
+        if (previousTag) {
+            def unreleasedCommits = getCommitsInRange("${previousTag}..HEAD")
+            if (unreleasedCommits) {
+                changelogContent.append("## Unreleased\n\n")
+                unreleasedCommits.eachLine { commit ->
+                    changelogContent.append("- ${commit}\n")
+                }
+                changelogContent.append("\n")
+            }
+        }
+
+        changelogFile.get().asFile.text = changelogContent.toString()
+        logger.lifecycle("Changelog сгенерирован: ${changelogFile.get().asFile.absolutePath}")
+    }
+}
+
+def getGitTags() {
+    def stdout = new ByteArrayOutputStream()
+    project.exec {
+        executable = 'git'
+        args = ['tag', '--sort=-creatordate']
+        standardOutput = stdout
+    }
+    stdout.toString().trim().split('\n') as List
+}
+
+def getTagDateTime(String tag) {
+    def stdout = new ByteArrayOutputStream()
+    project.exec {
+        executable = 'git'
+        args = ['log', '-1', '--format=%ai', tag]
+        standardOutput = stdout
+    }
+    stdout.toString().trim().replace(" ", "T")
+}
+
+def getCommitsInRange(String range) {
+    def stdout = new ByteArrayOutputStream()
+    project.exec {
+        executable = 'git'
+        args = ['log', range, '--pretty=format:%h - %s%n  Автор: %an | Дата: %ad %at', '--date=iso']
+        standardOutput = stdout
+        ignoreExitValue = true
+    }
+    stdout.toString().trim()
+}
+
+tasks.register('checkDependenciesSecurity') {
+    dependsOn 'dependencyCheckAnalyze'
+    doLast {
+        logger.lifecycle("Проверка безопасности зависимостей завершена")
+    }
+}
